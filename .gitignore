@@ -1,0 +1,31 @@
+# macOS
+.DS_Store
+
+# Xcode user-specific data
+xcuserdata/
+*.xcuserstate
+
+# Build products
+build/
+DerivedData/
+*.moved-aside
+
+# Xcode legacy per-user files
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+
+# Swift Package Manager
+.build/
+.swiftpm/
+
+# Dependency managers (in case they're ever used)
+Pods/
+Carthage/Build/
+
+# Misc build artifacts
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM

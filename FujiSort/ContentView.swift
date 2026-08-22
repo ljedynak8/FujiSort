@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import Photos
 
 struct ContentView: View {
     @Environment(\.modelContext) private var modelContext
@@ -39,6 +40,12 @@ struct ContentView: View {
                     }
                 }
             }
+        }
+        // Milestone-01 scaffolding: trigger the photo-library permission prompt on
+        // first launch so we can confirm it appears on device. Replace with real
+        // PhotoKit access flow in a later milestone.
+        .task {
+            _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
         }
     }
 

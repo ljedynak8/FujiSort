@@ -1,0 +1,9 @@
+{
+  "id" : "c281ba97-d111-4341-88ff-b7c122d0f5b1",
+  "targets" : [
+    {
+      "id" : "df99d634-9f5e-4bcf-ac78-087647d80d68",
+      "name" : "FujiSort"
+    }
+  ]
+}
