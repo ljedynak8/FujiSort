@@ -2,8 +2,6 @@
 //  FujiSortApp.swift
 //  FujiSort
 //
-//  Created by Leo Jedynak on 8/22/26.
-//
 
 import SwiftUI
 import SwiftData
@@ -12,12 +10,12 @@ import SwiftData
 struct FujiSortApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            Judgment.self,
+            CompareRecord.self,
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(for: schema, configurations: [configuration])
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }

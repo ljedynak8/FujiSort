@@ -1,89 +1,33 @@
 //
 //  ContentView.swift
-//  FujiSort
+//  FujiSort — Milestone 02
 //
-//  Created by Leo Jedynak on 8/22/26.
+//  Minimal harness only. No deck, no gestures — those are later milestones. This
+//  exists to confirm the store is alive and to show record counts.
 //
 
 import SwiftUI
 import SwiftData
-import Photos
 
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @Query private var judgments: [Judgment]
+
+    private var judged: Int { judgments.filter { $0.verdict != nil }.count }
+    private var dormant: Int { judgments.filter { $0.isDormant }.count }
 
     var body: some View {
-        NavigationViewWrapper {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
-            }
-#if os(macOS)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-#endif
-            .toolbar {
-#if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-#endif
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
-        }
-        // Milestone-01 scaffolding: trigger the photo-library permission prompt on
-        // first launch so we can confirm it appears on device. Replace with real
-        // PhotoKit access flow in a later milestone.
-        .task {
-            _ = await PHPhotoLibrary.requestAuthorization(for: .readWrite)
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
-        }
-    }
-}
-
-fileprivate struct NavigationViewWrapper<Content: View>: View {
-    let content: () -> Content
-
-    var body: some View {
-#if os(macOS)
-        NavigationSplitView {
-            content()
-        } detail: {
-            Text("Select an item")
-        }
-#else
         NavigationStack {
-            content()
+            List {
+                LabeledContent("Judgment records", value: "\(judgments.count)")
+                LabeledContent("With a verdict", value: "\(judged)")
+                LabeledContent("Dormant", value: "\(dormant)")
+            }
+            .navigationTitle("Judgment Store")
         }
-#endif
     }
 }
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+        .modelContainer(for: [Judgment.self, CompareRecord.self], inMemory: true)
 }
