@@ -12,7 +12,7 @@ These are settled. Do not build past them, and do not propose features that cros
 
 - **Sorting only.** No editing. Editing happens in Lightroom and Snapseed.
 - **Acting, not looking.** Every state exists to make a decision. Browsing finished work happens in Apple Photos. Do not build galleries, slideshows, or presentation views.
-- **Fuji-aware, never Fuji-dependent.** Any photo in the library must be sortable, including native iPhone photos. Fuji metadata (film simulation, camera, lens) is a bonus facet that degrades to absent. **Never filter the deck by camera** — no code path may treat a Fuji frame as more sortable than an iPhone one.
+- **Fuji-aware, never Fuji-dependent.** Any photo in the library must be sortable, including native iPhone photos. Fuji metadata is a bonus facet that degrades to absent — and measured, most of it *is* absent: camera make and model survive the transfer, but **film simulation, lens, and focus point do not**. Do not design around them. **Never filter the deck by camera** — no code path may treat a Fuji frame as more sortable than an iPhone one.
 
 ## What counts as sortable
 
@@ -110,12 +110,42 @@ The pass-1 **Keep** verdict and the pass-2 tiers are distinct concepts. Do not i
 - Scheme: FujiSort
 - Test target: FujiSortTests
 - UI test target: FujiSortUITests
-- Testing framework: Swift Testing (unit tests). UI test target is XCTest — XCUIAutomation runs only under the XCTest harness; Swift Testing does not host UI tests.
+- Testing framework: Swift Testing (unit tests) · XCTest (UI tests) — see setup notes
 - Minimum iOS: 26.0 — clears every feature minimum (highest is 18.0); personal single-device tool, no older install base to support.
 - Bundle identifier: com.fianchetto.FujiSort
 - Photo library usage key: NSPhotoLibraryUsageDescription
 - Persistence: SwiftData
 - Library access: PhotoKit, full authorization required (limited access is not a supported mode)
+
+## What the spike measured
+
+Milestone 01, on the real device and library. These are facts now, not assumptions — see `SPIKE-FINDINGS.md`.
+
+- **Nothing is on-device.** 0 of 20 sampled originals were local; all required a network download. Full-res latency is ~400 ms median on good wifi. **Prefetch is mandatory and zoom must sharpen progressively** (`deliveryMode = .opportunistic`), never block on the download.
+- **The deck is ~9,594 photos** — 80.9% of an 11,852-asset library after filtering. Screenshots alone remove 1,020.
+- **iOS bursts are effectively absent** (one extra frame library-wide). Compare exists for near-duplicates, which PhotoKit does not group for you — not for burst frames.
+- **Sessions really are tiny.** Last 30 days: 23 capture-day clusters, sizes 67, 66, 28, 13, then mostly 1–4. A count pill reading `Tuesday · 1` is correct behaviour.
+- **Persistent change tokens exist** with an iOS 16.0 floor — comfortably under the 26.0 target.
+- **`creationDate` is capture, not arrival.** Confirmed: assets appear in Recently Added with creation dates months old.
+- **Still open:** whether `localIdentifier` survives a device restore (needs a post-restore re-run). The fallback fingerprint is therefore **mandatory**, not belt-and-braces.
+
+## Milestone map
+
+Numbering starts at **00**. Where a session says "milestone N", this is N.
+
+| | | |
+|---|---|---|
+| 00 | Project scaffold — create project, deployment target, device build | done |
+| 01 | PhotoKit spike — throwaway diagnostics on a real library | done — see spike section above |
+| 02 | Store and asset identity — judgments, fingerprints, change tokens | next |
+| 03 | Library layer and image pipeline — session scoping, caching, prefetch | |
+| 04 | Pass 1 deck — four swipe verdicts, count pill, undo | |
+| 05 | Analysis state — sticky zoom, HUD, verdict buttons, filmstrip compare | |
+| 06 | Review view — tiles, tier filters, movement, compare | |
+| 07 | Finish — album sync on leaving review, batch reject deletion | |
+| 08 | First-run experience | |
+
+**01 was the gate and it passed** — full-resolution latency cleared the redesign threshold. Its measurements are above and are binding. The asset fingerprint remains mandatory: identifier stability across a device restore is still unmeasured, and the fingerprint cannot be backfilled onto records created without it.
 
 ## Project setup notes
 
