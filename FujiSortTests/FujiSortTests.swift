@@ -120,6 +120,33 @@ struct JudgmentStoreTests {
         #expect(store.undoLast() == false)                     // empty, no redo
     }
 
+    // MARK: - Session scoping (pure selection, decision 0003)
+
+    @Test func currentSessionIsMostRecentClusterWithUnjudged() {
+        // Two clusters, newest last. Nothing judged → newest cluster's members.
+        let clusters = [["a1", "a2"], ["b1", "b2"]]
+        #expect(SessionScope.selectCurrent(clusters: clusters, judged: []) == ["b1", "b2"])
+    }
+
+    @Test func currentSessionSkipsFullyJudgedRecentClusters() {
+        // Newest cluster fully judged → fall back to the next most recent with work.
+        let clusters = [["a1", "a2"], ["b1", "b2"]]
+        let judged: Set<String> = ["b1", "b2"]
+        #expect(SessionScope.selectCurrent(clusters: clusters, judged: judged) == ["a1", "a2"])
+    }
+
+    @Test func currentSessionReturnsOnlyUnjudgedMembers() {
+        // Partially-judged recent cluster: keep its identity, show only the rest.
+        let clusters = [["a1"], ["b1", "b2", "b3"]]
+        let judged: Set<String> = ["b2"]
+        #expect(SessionScope.selectCurrent(clusters: clusters, judged: judged) == ["b1", "b3"])
+    }
+
+    @Test func currentSessionNilWhenEverythingJudged() {
+        let clusters = [["a1"], ["b1"]]
+        #expect(SessionScope.selectCurrent(clusters: clusters, judged: ["a1", "b1"]) == nil)
+    }
+
     @Test func sessionClusteringSplitsTwoOutingsFromOneTransfer() {
         let base = Date(timeIntervalSince1970: 1_000_000)
         let day: TimeInterval = 86_400

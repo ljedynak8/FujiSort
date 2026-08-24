@@ -122,7 +122,9 @@ The pass-1 **Keep** verdict and the pass-2 tiers are distinct concepts. Do not i
 
 Milestone 01, on the real device and library. These are facts now, not assumptions — see `SPIKE-FINDINGS.md`.
 
-- **Nothing is on-device.** 0 of 20 sampled originals were local; all required a network download. Full-res latency is ~400 ms median on good wifi. **Prefetch is mandatory and zoom must sharpen progressively** (`deliveryMode = .opportunistic`), never block on the download.
+- **Nothing is on-device.** 0 of 20 sampled originals were local; all required a network download. **Prefetch is mandatory and zoom must sharpen progressively** (`deliveryMode = .opportunistic`), never block on the download.
+- **The number that matters is time-to-first-pixel: ~3 ms.** Time-to-sharp ranges 148 ms to over 1 s (measured 1067 ms for a 24 MP original on a contended connection). Never treat 400 ms as a guarantee — it was a median on a good single request.
+- **`NSPredicate` mistranslates `mediaSubtypes` bit tests.** `(mediaSubtypes & bit) == 0` collapses to `mediaSubtypes == 0` and silently drops every Live Photo, HDR, panorama, and depth asset. Only `NOT ((mediaSubtypes & bit) == bit)` is correct. **Any fetch-predicate change must be count-verified against the real library** — unit tests with injected data cannot catch this, and did not.
 - **The deck is ~9,594 photos** — 80.9% of an 11,852-asset library after filtering. Screenshots alone remove 1,020.
 - **iOS bursts are effectively absent** (one extra frame library-wide). Compare exists for near-duplicates, which PhotoKit does not group for you — not for burst frames.
 - **Sessions really are tiny.** Last 30 days: 23 capture-day clusters, sizes 67, 66, 28, 13, then mostly 1–4. A count pill reading `Tuesday · 1` is correct behaviour.

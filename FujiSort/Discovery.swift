@@ -23,8 +23,13 @@ enum DeckScope {
     static func fetchOptions() -> PHFetchOptions {
         let o = PHFetchOptions()
         o.includeAllBurstAssets = true      // finding 7: default drops burst frames
-        o.predicate = NSPredicate(format: "(mediaSubtypes & %d) == 0",
-                                  PHAssetMediaSubtype.photoScreenshot.rawValue)
+        // Exclude screenshots. NOTE: PhotoKit mistranslates the "bit-clear" forms
+        // `(mediaSubtypes & bit) == 0` and `(mediaSubtypes & bit) != bit` — both
+        // collapse to "mediaSubtypes == 0" and wrongly drop every Live/HDR/pano/
+        // depth asset (deck 9,593 → 5,127 on the real library, measured M03). Only
+        // the negated bit-set form evaluates correctly.
+        let screenshot = PHAssetMediaSubtype.photoScreenshot.rawValue
+        o.predicate = NSPredicate(format: "NOT ((mediaSubtypes & %d) == %d)", screenshot, screenshot)
         o.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: true)]
         return o
     }
@@ -32,12 +37,20 @@ enum DeckScope {
     /// Scoped identifiers in capture order. `sourceType` isn't predicate-able, so
     /// user-library filtering happens in the enumeration.
     static func scopedIdentifiers() -> [String] {
+        scopedAssets().map(\.localIdentifier)
+    }
+
+    /// Scoped assets in capture order — same scope as `scopedIdentifiers()`, but
+    /// carrying the `PHAsset`s (session scoping needs their `creationDate`, and the
+    /// image pipeline needs the objects themselves). `sourceType` isn't
+    /// predicate-able, so user-library filtering happens in the enumeration.
+    static func scopedAssets() -> [PHAsset] {
         let result = PHAsset.fetchAssets(with: .image, options: fetchOptions())
-        var ids: [String] = []
+        var assets: [PHAsset] = []
         result.enumerateObjects { asset, _, _ in
-            if asset.sourceType == .typeUserLibrary { ids.append(asset.localIdentifier) }
+            if asset.sourceType == .typeUserLibrary { assets.append(asset) }
         }
-        return ids
+        return assets
     }
 }
 
