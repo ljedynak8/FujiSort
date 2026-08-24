@@ -21,6 +21,9 @@ struct AnalysisView: View {
     /// Lets the strip show which mark is already applied, without the model reaching
     /// into the store. Nil where identity isn't tracked (synthetic harness).
     var verdictOf: (DeckItem) -> Verdict? = { _ in nil }
+    /// The pass-2 equivalent: which tier the current photo already sits in, for the
+    /// tier strip's applied state. Nil when not in the review.
+    var tierOf: (DeckItem) -> TierPosition? = { _ in nil }
 
     @Environment(\.displayScale) private var displayScale
     @State private var interacting = false
@@ -69,12 +72,21 @@ struct AnalysisView: View {
             if model.isCompare {
                 Filmstrip(model: model).padding(.bottom, 8)
             }
-            VerdictStrip(applied: model.current.flatMap(verdictOf),
-                         isCompare: model.isCompare,
-                         onVerdict: { model.commit($0) },
-                         onPin: { model.pin() },
-                         onExit: { model.cancel() })
-                .padding(.bottom, 8)
+            switch model.stripKind {
+            case .verdicts:
+                VerdictStrip(applied: model.current.flatMap(verdictOf),
+                             isCompare: model.isCompare,
+                             onVerdict: { model.commit($0) },
+                             onPin: { model.pin() },
+                             onExit: { model.cancel() })
+                    .padding(.bottom, 8)
+            case .tiers:
+                TierStrip(applied: model.current.flatMap(tierOf),
+                          isCompare: model.isCompare,
+                          onTier: { model.commitTier($0) },
+                          onExit: { model.cancel() })
+                    .padding(.bottom, 8)
+            }
         }
     }
 
@@ -404,5 +416,68 @@ private struct VerdictStrip: View {
             .frame(minWidth: 44, minHeight: 44)
         }
         .accessibilityLabel(label)
+    }
+}
+
+// MARK: - Tier button strip (pass 2)
+
+/// The analysis strip when reached from the review: Portfolio · Strong · Out — the
+/// same strip, same positions as the verdict strip, different vocabulary
+/// (fujisort-interaction). Portfolio carries the one accent (fujisort-design: the
+/// accent marks "the Portfolio button in the analysis strip"); Strong is ink only.
+private struct TierStrip: View {
+    let applied: TierPosition?
+    let isCompare: Bool
+    let onTier: (TierAction) -> Void
+    let onExit: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            tierButton(.portfolio, system: "star.fill", title: "Portfolio",
+                       isApplied: applied == .portfolio, accent: true)
+            tierButton(.strong, system: "checkmark", title: "Strong",
+                       isApplied: applied == .strong, accent: false)
+            tierButton(.out, system: "arrow.uturn.left", title: "Out",
+                       isApplied: false, accent: false)
+            if isCompare {
+                Button(action: onExit) {
+                    VStack(spacing: 3) {
+                        Image(systemName: "checkmark.circle").font(.body)
+                        Text("Done").font(.caption.weight(.medium))
+                    }
+                    .foregroundStyle(Palette.ink.opacity(0.60))
+                    .frame(minWidth: 44, minHeight: 44)
+                }
+                .accessibilityLabel("Done")
+            }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(Palette.chrome.opacity(0.92), in: .rect(cornerRadius: 18))
+        .padding(.horizontal, 12)
+    }
+
+    private func tierButton(_ action: TierAction, system: String, title: String,
+                            isApplied: Bool, accent: Bool) -> some View {
+        // Portfolio's accent is allowed here (it is not adjacent to the photograph in
+        // the way a persistent tile tint would be); Strong/Out stay achromatic. Applied
+        // state is carried by the underline, so the strip reads without colour too.
+        let tint = accent ? Palette.portfolio : Palette.ink.opacity(isApplied ? 0.92 : 0.60)
+        return Button { onTier(action) } label: {
+            VStack(spacing: 3) {
+                Image(systemName: system).font(.body)
+                Text(title).font(.caption.weight(.medium))
+            }
+            .foregroundStyle(tint)
+            .frame(minWidth: 44, minHeight: 44)
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .bottom) {
+                if isApplied {
+                    Capsule().fill(accent ? Palette.portfolio : Palette.ink.opacity(0.92))
+                        .frame(width: 16, height: 2)
+                }
+            }
+        }
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isApplied ? [.isSelected] : [])
     }
 }

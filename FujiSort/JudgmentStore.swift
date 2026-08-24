@@ -88,6 +88,34 @@ final class JudgmentStore {
         }, label: "tier \(tier?.rawValue ?? "none")")
     }
 
+    /// A pass-2 review move as ONE undoable action. It may retier a candidate, or
+    /// demote it out of the review (verdict → keep, tier cleared). Both fields are set
+    /// and reverted together, so one gesture is exactly one undo — never two ops for a
+    /// single move. Returns false, pushing nothing, when the target state equals the
+    /// current one (e.g. assigning the tier already held).
+    @discardableResult
+    func setReviewState(verdict: Verdict?, tier: Tier?, for identifier: String, at date: Date = Date()) -> Bool {
+        guard let judgment = self.judgment(for: identifier) else { return false }
+        guard judgment.verdict != verdict || judgment.tier != tier else { return false }
+        let prevVerdict = judgment.verdict
+        let prevVerdictAt = judgment.verdictRecordedAt
+        let prevTier = judgment.tier
+        let prevTierAt = judgment.tierRecordedAt
+        judgment.verdict = verdict
+        judgment.verdictRecordedAt = date
+        judgment.tier = tier
+        judgment.tierRecordedAt = date
+        save()
+        undoStack.push({ [weak self] in
+            guard let live = self?.judgment(for: identifier) else { return }
+            live.verdict = prevVerdict
+            live.verdictRecordedAt = prevVerdictAt
+            live.tier = prevTier
+            live.tierRecordedAt = prevTierAt
+        }, label: "review move")
+        return true
+    }
+
     /// Reverts exactly one action, then persists. No redo.
     @discardableResult
     func undoLast() -> Bool {

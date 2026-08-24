@@ -55,6 +55,7 @@ struct DeckView: View {
     @State private var zoomAnchor: UnitPoint = .center
     @State private var zoomTranslation: CGSize = .zero      // two-finger pan (springy)
     @State private var analysis: AnalysisModel?
+    @State private var showReview = false
 
     private let maxRotation: Double = 8
     private let commit = Animation.easeOut(duration: 0.22)
@@ -85,6 +86,11 @@ struct DeckView: View {
             AnalysisView(model: analysisModel,
                          verdictOf: { model.currentVerdict(for: $0) })
                 .transition(.opacity)
+        }
+        .fullScreenCover(isPresented: $showReview) {
+            // Pass 2. Non-scoped: it pools every candidate across outings. Album sync on
+            // leaving is milestone 07's, wired at ReviewHostView's onLeave seam.
+            ReviewHostView(synthetic: false)
         }
         .onDisappear { model.stopPrefetch() }
     }
@@ -230,7 +236,7 @@ struct DeckView: View {
                            onPrimary: { enterCompare() },
                            onSecondary: { model.acknowledgePinned() })
         case .done:
-            DoneView()
+            DoneView(onReview: { showReview = true })
         }
     }
 
@@ -436,10 +442,19 @@ private struct EndOfDeckSheet: View {
 }
 
 private struct DoneView: View {
+    let onReview: () -> Void
+
     var body: some View {
-        Text("Nothing left to sort")
-            .font(.body)
-            .foregroundStyle(Palette.ink.opacity(0.60))
+        VStack(spacing: 20) {
+            Text("Nothing left to sort")
+                .font(.body)
+                .foregroundStyle(Palette.ink.opacity(0.60))
+            Button("Review candidates", action: onReview)
+                .font(.headline)
+                .foregroundStyle(Palette.ink.opacity(0.92))
+                .padding(.horizontal, 20).padding(.vertical, 12)
+                .background(Palette.chrome, in: .capsule)
+        }
     }
 }
 
@@ -452,13 +467,29 @@ struct DeckHostView: View {
     var body: some View {
         ZStack {
             Palette.deck.ignoresSafeArea()
-            if let model {
-                DeckView(model: model)
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("-synthetic-review") {
+                // Boot straight into a synthetic pass-2 review so the grid, swipe,
+                // multi-select, toast, undo and filters are driveable in the Simulator,
+                // which can't seed a real PhotoKit candidate pool.
+                ReviewHostView(synthetic: true)
             } else {
-                ProgressView().tint(Palette.ink.opacity(0.60))
+                deckOrLoading
             }
+            #else
+            deckOrLoading
+            #endif
         }
         .task { if model == nil { model = makeModel() } }
+    }
+
+    @ViewBuilder
+    private var deckOrLoading: some View {
+        if let model {
+            DeckView(model: model)
+        } else {
+            ProgressView().tint(Palette.ink.opacity(0.60))
+        }
     }
 
     @MainActor

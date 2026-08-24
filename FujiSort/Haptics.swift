@@ -50,5 +50,18 @@ final class Haptics {
     /// the threshold cross — a light "you've landed on something" signal.
     func reachedOneToOne() { selection.selectionChanged() }
 
+    /// Pass-2 tier moves. The design skill's haptic table covers pass-1 verdicts only,
+    /// so this is an extension in the same spirit: promotion is the richer `.medium`
+    /// (as Candidate is in sort), a demote/remove is the least assertive `.soft`. A
+    /// no-op move (Portfolio promoted) is silent.
+    func tierMove(_ outcome: TierOutcome) {
+        switch outcome {
+        case .tier(.portfolio): medium.impactOccurred()
+        case .tier(.strong):    soft.impactOccurred()
+        case .removeFromReview: soft.impactOccurred()
+        case .noChange:         break
+        }
+    }
+
     func undo() { notification.notificationOccurred(.warning) }
 }
