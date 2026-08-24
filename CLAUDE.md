@@ -141,15 +141,17 @@ Numbering starts at **00**. Where a session says "milestone N", this is N.
 |---|---|---|
 | 00 | Project scaffold — create project, deployment target, device build | done |
 | 01 | PhotoKit spike — throwaway diagnostics on a real library | done — see spike section above |
-| 02 | Store and asset identity — judgments, fingerprints, change tokens | next |
-| 03 | Library layer and image pipeline — session scoping, caching, prefetch | |
-| 04 | Pass 1 deck — four swipe verdicts, count pill, undo | |
-| 05 | Analysis state — sticky zoom, HUD, verdict buttons, filmstrip compare | |
-| 06 | Review view — tiles, tier filters, movement, compare | |
-| 07 | Finish — album sync on leaving review, batch reject deletion | |
-| 08 | First-run experience | |
+| 02 | Store and asset identity — judgments, fingerprints, change tokens | done |
+| 03 | Library layer and image pipeline — session scoping, caching, prefetch | done |
+| 04 | Pass 1 deck — four swipe verdicts, count pill, undo | done |
+| 05 | Analysis state — sticky zoom, HUD, verdict buttons, filmstrip compare | done |
+| 06 | Review view — tiles, tier filters, movement, compare | done |
+| 07 | Finish — album sync on leaving review, batch reject deletion | done |
+| 08 | First-run experience | next |
 
 **01 was the gate and it passed** — full-resolution latency cleared the redesign threshold. Its measurements are above and are binding. The asset fingerprint remains mandatory: identifier stability across a device restore is still unmeasured, and the fingerprint cannot be backfilled onto records created without it.
+
+**Known gap, carried since milestone 02:** `LibraryObserver` is implemented but **never instantiated** — no `PHPhotoLibraryChangeObserver` is registered, so external library changes are not observed. Its own doc comment claims "Registered at store construction", which is why this went unnoticed for five milestones. In-app deletion reconciles explicitly (milestone 07) and the deck rebuilds from a fresh fetch each launch, so nothing is visibly broken — but the **dormant-record path `CLAUDE.md` specifies is never exercised.** Wire it before anything assumes live external reconciliation.
 
 ## Project setup notes
 

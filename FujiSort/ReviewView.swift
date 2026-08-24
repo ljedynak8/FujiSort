@@ -402,6 +402,7 @@ private struct ToastBanner: View {
 struct ReviewHostView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(FinishCoordinator.self) private var coordinator
     let synthetic: Bool
     @State private var model: ReviewModel?
 
@@ -421,9 +422,11 @@ struct ReviewHostView: View {
     private func makeModel() -> ReviewModel {
         if synthetic { return .synthetic() }
         let store = JudgmentStore(context: modelContext)
+        // Album sync runs here — the one place leaving the review is signalled. The
+        // coordinator syncs (or, on the first finish, defers to the consent prompt).
+        let coordinator = self.coordinator
         return .live(store: store, pipeline: ImagePipeline()) {
-            // Milestone 07: album sync runs here, when the user leaves the review.
-            // One place, observable, idempotent. No album writes in this milestone.
+            coordinator.reviewDidLeave()
         }
     }
 }

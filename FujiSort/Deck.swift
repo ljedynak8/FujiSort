@@ -53,8 +53,8 @@ enum DeckBuilder {
     /// Device wrapper. Same scope as the rest of the app (DeckScope), clustered by
     /// capture date, ordered newest outing first.
     @MainActor
-    static func build(store: JudgmentStore) -> [DeckItem] {
-        let assets = DeckScope.scopedAssets()
+    static func build(store: JudgmentStore, includeScreenshots: Bool = false) -> [DeckItem] {
+        let assets = DeckScope.scopedAssets(includeScreenshots: includeScreenshots)
         guard !assets.isEmpty else { return [] }
 
         var byID: [String: PHAsset] = [:]

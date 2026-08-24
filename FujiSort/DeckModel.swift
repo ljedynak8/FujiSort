@@ -204,8 +204,8 @@ final class DeckModel {
 extension DeckModel {
     /// The real deck: all unjudged photos, newest outing first, over the store.
     @MainActor
-    static func live(store: JudgmentStore, pipeline: ImagePipeline) -> DeckModel {
-        let deck = DeckBuilder.build(store: store)
+    static func live(store: JudgmentStore, pipeline: ImagePipeline, includeScreenshots: Bool = false) -> DeckModel {
+        let deck = DeckBuilder.build(store: store, includeScreenshots: includeScreenshots)
         let model = DeckModel(deck: deck, recorder: StoreDeckRecorder(store: store), pipeline: pipeline)
         model.refreshPrefetch()
         return model

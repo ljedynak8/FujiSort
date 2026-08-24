@@ -47,6 +47,7 @@ struct DeckView: View {
     let model: DeckModel
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(FinishCoordinator.self) private var coordinator
 
     @State private var drag: CGSize = .zero
     @State private var didTick = false
@@ -56,6 +57,8 @@ struct DeckView: View {
     @State private var zoomTranslation: CGSize = .zero      // two-finger pan (springy)
     @State private var analysis: AnalysisModel?
     @State private var showReview = false
+    @State private var showFinish = false
+    @State private var showSettings = false
 
     private let maxRotation: Double = 8
     private let commit = Animation.easeOut(duration: 0.22)
@@ -88,9 +91,26 @@ struct DeckView: View {
                 .transition(.opacity)
         }
         .fullScreenCover(isPresented: $showReview) {
-            // Pass 2. Non-scoped: it pools every candidate across outings. Album sync on
-            // leaving is milestone 07's, wired at ReviewHostView's onLeave seam.
+            // Pass 2. Non-scoped: it pools every candidate across outings. Album sync fires
+            // when the user leaves, at ReviewHostView's onLeave → coordinator seam.
             ReviewHostView(synthetic: false)
+        }
+        .fullScreenCover(isPresented: $showFinish) {
+            // The finish screen carries deletion and nothing else (decision 0005).
+            FinishView()
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView(coordinator: coordinator)
+        }
+        // First-finish opt-in: raised by the coordinator when the review is left the first
+        // time with candidates. Sync still fires on leave once opted in — this only gathers
+        // consent to the mechanism, and never fires per sync.
+        .sheet(isPresented: Binding(
+            get: { coordinator.needsConsent },
+            set: { if !$0 { coordinator.needsConsent = false } })) {
+            AlbumSyncConsentSheet(
+                onSync:  { coordinator.resolveConsent(enable: true) },
+                onNotNow: { coordinator.resolveConsent(enable: false) })
         }
         .onDisappear { model.stopPrefetch() }
     }
@@ -236,7 +256,9 @@ struct DeckView: View {
                            onPrimary: { enterCompare() },
                            onSecondary: { model.acknowledgePinned() })
         case .done:
-            DoneView(onReview: { showReview = true })
+            DoneView(onReview: { showReview = true },
+                     onFinish: { showFinish = true },
+                     onSettings: { showSettings = true })
         }
     }
 
@@ -441,20 +463,75 @@ private struct EndOfDeckSheet: View {
     }
 }
 
+/// The session-end home. Reviewing candidates and deleting rejects are deliberately
+/// separate actions (decision 0005) — album sync is not here at all; it fires on leaving
+/// the review. Settings sits here because album sync must be revocable.
 private struct DoneView: View {
     let onReview: () -> Void
+    let onFinish: () -> Void
+    let onSettings: () -> Void
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            Color.clear
+            Button(action: onSettings) {
+                Image(systemName: "gearshape")
+                    .font(.title3)
+                    .foregroundStyle(Palette.ink.opacity(0.60))
+                    .frame(minWidth: 44, minHeight: 44)
+            }
+            .accessibilityLabel("Settings")
+            .padding(.trailing, 8)
+
+            VStack(spacing: 20) {
+                Text("Nothing left to sort")
+                    .font(.body)
+                    .foregroundStyle(Palette.ink.opacity(0.60))
+                Button("Review candidates", action: onReview)
+                    .font(.headline)
+                    .foregroundStyle(Palette.ink.opacity(0.92))
+                    .padding(.horizontal, 20).padding(.vertical, 12)
+                    .background(Palette.chrome, in: .capsule)
+                Button("Delete rejected photos", action: onFinish)
+                    .font(.subheadline)
+                    .foregroundStyle(Palette.ink.opacity(0.60))
+                    .frame(minHeight: 44)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+/// The one-time album-sync opt-in, shown on the first finish. Consent is to the mechanism,
+/// not to each firing (fujisort-photokit). Declining is free and revocable in settings.
+private struct AlbumSyncConsentSheet: View {
+    let onSync: () -> Void
+    let onNotNow: () -> Void
 
     var body: some View {
         VStack(spacing: 20) {
-            Text("Nothing left to sort")
-                .font(.body)
-                .foregroundStyle(Palette.ink.opacity(0.60))
-            Button("Review candidates", action: onReview)
+            Text("Sync your picks to Photos?")
                 .font(.headline)
+                .multilineTextAlignment(.center)
                 .foregroundStyle(Palette.ink.opacity(0.92))
-                .padding(.horizontal, 20).padding(.vertical, 12)
-                .background(Palette.chrome, in: .capsule)
+            Text("FujiSort can keep a FujiSort · Portfolio and FujiSort · Strong album in Photos, updated whenever you leave the review. It's one-way — your judgments stay the source — and you can turn it off in Settings.")
+                .font(.subheadline)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Palette.ink.opacity(0.60))
+            HStack(spacing: 12) {
+                Button("Not now", action: onNotNow)
+                    .buttonStyle(.bordered)
+                Button("Sync", action: onSync)
+                    .buttonStyle(.borderedProminent)
+            }
+            .tint(Palette.ink.opacity(0.38))
+            .padding(.top, 4)
         }
+        .padding(28)
+        .frame(maxWidth: .infinity)
+        .presentationDetents([.medium])
+        .presentationBackground(Palette.chrome)
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -462,6 +539,7 @@ private struct DoneView: View {
 
 struct DeckHostView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(AppPreferences.self) private var preferences
     @State private var model: DeckModel?
 
     var body: some View {
@@ -506,6 +584,7 @@ struct DeckHostView: View {
         }
         #endif
         let store = JudgmentStore(context: modelContext)
-        return .live(store: store, pipeline: ImagePipeline())
+        return .live(store: store, pipeline: ImagePipeline(),
+                     includeScreenshots: preferences.includeScreenshots)
     }
 }
