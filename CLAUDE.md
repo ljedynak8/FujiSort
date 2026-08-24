@@ -83,7 +83,8 @@ The pass-1 **Keep** verdict and the pass-2 tiers are distinct concepts. Do not i
 - **Album sync runs when the user leaves the review**, not on a Finish button. It is idempotent and one-way: the store is the truth, the album is a projection.
 - **`isFavorite` is never written** unless explicitly opted into. Reading it is fine.
 - **Rejects are deleted as one batch at session end**, never per photo.
-- **The deck is defined as "photos with no verdict recorded, in capture order."** No cursor, no saved position. A *record* is not a *verdict* — records legitimately exist without one (created-then-undone, or dormant after the asset was deleted elsewhere), and those photos stay in the deck.
+- **The deck is "photos with no verdict recorded."** No cursor, no saved position. A *record* is not a *verdict* — records legitimately exist without one (created-then-undone, or dormant after the asset was deleted elsewhere), and those photos stay in the deck.
+- **Deck order is newest outing first, capture order ascending within each outing.** Not pure chronological order: with unjudged photos going back to 2003, a purely ascending deck would open in the distant past, which contradicts [decision 0003](../03-decisions/0003-first-run-starts-with-the-most-recent-take.md). The scoped PhotoKit fetch sorts ascending; the deck builder reverses at the *cluster* level, never within one.
 - **Skip removes a photo from the current pass, not from the session.** When the deck runs out, skipped photos come back for another lap, offered rather than forced — *"14 skipped — another lap?"* — followed by any pinned set. This is what makes Skip mean "decide later" instead of "decide never", and it is why Skip is still a verdict: the lap is defined by the verdict, not by tracking membership.
 - **Sessions are labels, not containers.** A session is a capture-date cluster used for naming and grouping on screen. It never scopes a queue.
 

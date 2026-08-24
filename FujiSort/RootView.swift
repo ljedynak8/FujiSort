@@ -17,7 +17,7 @@ struct RootView: View {
             Palette.deck.ignoresSafeArea()
             switch status {
             case .authorized:
-                SessionListView()
+                DeckHostView()
             case .notDetermined:
                 ProgressView()
                     .tint(Palette.ink.opacity(0.60))

@@ -164,3 +164,134 @@ struct JudgmentStoreTests {
         #expect(clusters.last == ["b1", "b2"])
     }
 }
+
+// MARK: - Swipe decision (pure, milestone 04)
+
+struct SwipeDecisionTests {
+    private let t = SwipeThresholds.standard   // 90 pt / 800 pt·s⁻¹
+
+    @Test func eachDirectionCommitsByDisplacement() {
+        #expect(SwipeDecision.outcome(translation: CGSize(width: -120, height: 0), velocity: .zero, thresholds: t) == .verdict(.reject))
+        #expect(SwipeDecision.outcome(translation: CGSize(width: 120, height: 0), velocity: .zero, thresholds: t) == .verdict(.keep))
+        #expect(SwipeDecision.outcome(translation: CGSize(width: 0, height: -120), velocity: .zero, thresholds: t) == .verdict(.candidate))
+        #expect(SwipeDecision.outcome(translation: CGSize(width: 0, height: 120), velocity: .zero, thresholds: t) == .verdict(.skip))
+    }
+
+    @Test func flickCommitsByVelocityWithLittleMovement() {
+        // Below the displacement threshold, but a decisive flick.
+        #expect(SwipeDecision.outcome(translation: CGSize(width: -10, height: 0), velocity: CGSize(width: -1000, height: 0), thresholds: t) == .verdict(.reject))
+        #expect(SwipeDecision.outcome(translation: CGSize(width: 0, height: -8), velocity: CGSize(width: 0, height: -1200), thresholds: t) == .verdict(.candidate))
+    }
+
+    @Test func thresholdBoundaryCommits() {
+        #expect(SwipeDecision.outcome(translation: CGSize(width: 90, height: 0), velocity: .zero, thresholds: t) == .verdict(.keep))
+    }
+
+    @Test func justBelowThresholdCancels() {
+        #expect(SwipeDecision.outcome(translation: CGSize(width: 89, height: 0), velocity: .zero, thresholds: t) == .cancel)
+    }
+
+    @Test func belowBothDisplacementAndVelocityCancels() {
+        #expect(SwipeDecision.outcome(translation: CGSize(width: 40, height: 12), velocity: CGSize(width: 200, height: 50), thresholds: t) == .cancel)
+    }
+
+    @Test func nearDiagonalResolvesToDominantAxis() {
+        // Horizontal component dominates → keep, not candidate/skip.
+        #expect(SwipeDecision.outcome(translation: CGSize(width: 120, height: 80), velocity: .zero, thresholds: t) == .verdict(.keep))
+        // Vertical component dominates → skip.
+        #expect(SwipeDecision.outcome(translation: CGSize(width: 40, height: 120), velocity: .zero, thresholds: t) == .verdict(.skip))
+    }
+
+    @Test func crossesCommitTracksThreshold() {
+        #expect(SwipeDecision.crossesCommit(translation: CGSize(width: 89, height: 0), velocity: .zero, thresholds: t) == false)
+        #expect(SwipeDecision.crossesCommit(translation: CGSize(width: 90, height: 0), velocity: .zero, thresholds: t))
+    }
+}
+
+// MARK: - Deck ordering (pure, milestone 04)
+
+struct DeckBuilderTests {
+    @Test func newestOutingFirstAscendingWithinDropsJudged() {
+        let clusters = [
+            (sessionID: "s0", label: "old", members: ["a1", "a2"]),        // older outing
+            (sessionID: "s1", label: "new", members: ["b1", "b2", "b3"]),  // newer outing
+        ]
+        let entries = DeckBuilder.order(clusters: clusters, judged: ["b2"])
+        // Newer outing first, ascending within, b2 judged and dropped, outings contiguous.
+        #expect(entries.map(\.id) == ["b1", "b3", "a1", "a2"])
+        #expect(entries.map(\.sessionLabel) == ["new", "new", "old", "old"])
+    }
+}
+
+// MARK: - Deck model: one swipe = one undo, laps, seam (milestone 04)
+
+@MainActor
+struct DeckModelTests {
+
+    @Test func oneSwipeIsExactlyOneUndo() {
+        let m = DeckModel.synthetic(count: 6)
+        #expect(m.index == 0)
+        #expect(m.canUndo == false)
+        m.undo()                       // no-op on an empty stack
+        #expect(m.index == 0)
+
+        m.commit(.keep)
+        m.commit(.reject)
+        #expect(m.index == 2)
+        #expect(m.canUndo)
+
+        m.undo()
+        #expect(m.index == 1)          // exactly one step back
+        #expect(m.canUndo)
+
+        m.undo()
+        #expect(m.index == 0)
+        #expect(m.canUndo == false)
+
+        m.undo()                       // no redo, no underflow
+        #expect(m.index == 0)
+    }
+
+    @Test func undoRevertsTheRecordedVerdict() {
+        let m = DeckModel.synthetic(count: 4)
+        m.commit(.skip)                // syn-0 skipped
+        m.commit(.keep)                // syn-1 kept
+        m.commit(.skip)                // syn-2 skipped
+        #expect(Set(m.skippedIDs()) == ["syn-0", "syn-2"])
+        m.undo()                       // reverts syn-2's skip in the store
+        #expect(Set(m.skippedIDs()) == ["syn-0"])
+    }
+
+    @Test func skipLapIsRecomputedFromVerdictAndRebuildsDeck() {
+        let m = DeckModel.synthetic(count: 4)
+        m.commit(.skip); m.commit(.keep); m.commit(.skip); m.commit(.reject)
+        #expect(Set(m.skippedIDs()) == ["syn-0", "syn-2"])
+        m.beginSkipLap()
+        #expect(m.deck.map(\.id) == ["syn-0", "syn-2"])   // original order preserved
+        #expect(m.index == 0)
+        #expect(m.canUndo == false)                        // fresh lap, clean undo
+    }
+
+    @Test func pillIsPerOutingAndRelabelsAtTheSeam() {
+        let m = DeckModel.synthetic(count: 24)             // 12 + 12 across two outings
+        #expect(m.pillLabel == "Saturday · 23 Aug 2026")
+        #expect(m.pillCount == 12)
+        for _ in 0..<12 { m.commit(.keep) }
+        #expect(m.index == 12)
+        #expect(m.pillLabel == "Friday · 22 Aug 2026")     // relabels at the seam
+        #expect(m.pillCount == 12)                         // per-outing, not whole deck
+        m.commit(.keep)
+        #expect(m.pillCount == 11)
+    }
+
+    @Test func pinRecordsCandidateAndIsUndoneWholesale() {
+        let m = DeckModel.synthetic(count: 3)
+        m.pin()
+        #expect(m.index == 1)
+        #expect(m.pinned.contains("syn-0"))
+        #expect(m.skippedIDs().isEmpty)                    // candidate, not skip
+        m.undo()
+        #expect(m.index == 0)
+        #expect(m.pinned.contains("syn-0") == false)       // pin membership reverted too
+    }
+}
