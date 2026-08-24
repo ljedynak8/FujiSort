@@ -43,6 +43,11 @@ final class DeckModel {
     private let recorder: DeckRecorder
     private var deckAssets: [PHAsset]
 
+    /// The full set as first built, for the compare strip: the deck array itself is
+    /// rebuilt during a skip lap (and would drop non-skipped pinned candidates), so
+    /// pinned items are resolved against this snapshot instead.
+    private let orderedItems: [DeckItem]
+
     /// One entry per committed card, popped 1:1 by undo. Undo availability tracks
     /// THIS, not the recorder — so a fresh lap starts with a clean undo affordance
     /// while committed verdicts stay in the store.
@@ -57,6 +62,7 @@ final class DeckModel {
         self.thresholds = thresholds
         self.isSynthetic = isSynthetic
         self.deckAssets = deck.compactMap(\.asset)
+        self.orderedItems = deck
         if deck.isEmpty { phase = .done }
     }
 
@@ -100,6 +106,25 @@ final class DeckModel {
         Haptics.shared.verdict(verdict)
         advance()
     }
+
+    /// Record a verdict for a SPECIFIC item WITHOUT advancing the deck cursor. This is
+    /// the analysis/compare write path: an analysis pin is an annotation that stays
+    /// (interaction skill), and a compare verdict acts on the hand-picked frame, not
+    /// on the deck's position. Undo is still one mark per call, so it reverts cleanly.
+    func recordInPlace(_ verdict: Verdict, for item: DeckItem, pin: Bool = false) {
+        recorder.record(verdict, for: item)
+        if pin { pinned.insert(item.id) }
+        marks.append(UndoMark(prevIndex: index, pinnedID: pin ? item.id : nil))
+        lastCommitted = verdict
+        Haptics.shared.verdict(verdict)
+    }
+
+    /// The verdict already recorded for an item (for the analysis strip's applied
+    /// state). Reads through the recorder, so it is correct for real and synthetic.
+    func currentVerdict(for item: DeckItem) -> Verdict? { recorder.verdict(for: item.id) }
+
+    /// The pinned compare set, in original deck order, resolved against the snapshot.
+    var compareItems: [DeckItem] { orderedItems.filter { pinned.contains($0.id) } }
 
     /// Reverts exactly one committed card. Returns to that photo unjudged — the only
     /// way forward is a fresh verdict (no redo). Covers the store, never the library.
@@ -199,5 +224,21 @@ extension DeckModel {
                             syntheticIndex: i)
         }
         return DeckModel(deck: items, recorder: SyntheticDeckRecorder(), isSynthetic: true)
+    }
+
+    /// Debug-only synthetic deck that lands straight on the pinned-compare offer, so
+    /// the Simulator can drive the filmstrip in one tap (a real end-of-deck lap would
+    /// take dozens of swipes). Gate: the `-synthetic-compare` launch argument.
+    static func syntheticCompare(count: Int = 5) -> DeckModel {
+        let items: [DeckItem] = (0..<count).map { i in
+            DeckItem(id: "cmp-\(i)", asset: nil, sessionID: "cmp",
+                     sessionLabel: "Compare set", syntheticIndex: i)
+        }
+        let model = DeckModel(deck: items, recorder: SyntheticDeckRecorder(), isSynthetic: true)
+        for item in items { model.recordInPlace(.candidate, for: item, pin: true) }
+        model.marks.removeAll()                 // debug seed — nothing to undo
+        model.index = items.count               // exhausted
+        model.phase = .pinnedOffer(items.count)
+        return model
     }
 }

@@ -53,7 +53,8 @@ struct DeckView: View {
     @State private var cardOpacity: Double = 1
     @State private var zoomScale: CGFloat = 1
     @State private var zoomAnchor: UnitPoint = .center
-    @State private var selectedAsset: PHAsset?
+    @State private var zoomTranslation: CGSize = .zero      // two-finger pan (springy)
+    @State private var analysis: AnalysisModel?
 
     private let maxRotation: Double = 8
     private let commit = Animation.easeOut(duration: 0.22)
@@ -78,10 +79,12 @@ struct DeckView: View {
                 overlays(size: geo.size)
             }
         }
-        .fullScreenCover(item: $selectedAsset) { asset in
-            // Placeholder for the analysis state (milestone 05). For now the tap —
-            // the deck's harmless accident sink — opens the milestone-03 viewer.
-            FullImageView(asset: asset, pipeline: model.pipeline ?? ImagePipeline())
+        .fullScreenCover(item: $analysis) { analysisModel in
+            // The per-photo detour. Tap is the deck's accident sink — instantly
+            // reversible, nothing recorded — and now opens the real analysis state.
+            AnalysisView(model: analysisModel,
+                         verdictOf: { model.currentVerdict(for: $0) })
+                .transition(.opacity)
         }
         .onDisappear { model.stopPrefetch() }
     }
@@ -93,14 +96,13 @@ struct DeckView: View {
         let progress = commitProgress(drag)
         return DeckCardContent(item: item, pipeline: model.pipeline)
             .scaleEffect(zoomScale, anchor: zoomAnchor)
+            .offset(zoomTranslation)                       // two-finger pan (springs back)
             .overlay { edgeGlow(verdict: verdict, progress: progress) }
+            .overlay { gestureSurface(size: size, item: item) }
             .rotationEffect(rotation(for: drag, width: size.width))
             .offset(drag)
             .opacity(cardOpacity)
             .id(item.id)
-            .gesture(swipe(size: size))
-            .simultaneousGesture(zoom)
-            .onTapGesture { if let asset = item.asset { selectedAsset = asset } }
             .accessibilityElement()
             .accessibilityLabel(Text(item.sessionLabel))
             .accessibilityActions {
@@ -108,49 +110,74 @@ struct DeckView: View {
                     Button(v.spoken) { model.commit(v) }
                 }
                 Button("Pin for compare") { model.pin() }
+                Button("Analyse") { enterAnalysis() }
                 if model.canUndo { Button("Undo") { model.undo() } }
             }
     }
 
-    // MARK: Gestures
+    // MARK: Gestures — the UIKit surface owns all touch (milestone 05)
 
-    private func swipe(size: CGSize) -> some Gesture {
-        // minimumDistance keeps a stationary tap from starting a drag, so tap →
-        // analysis stays reachable; past it the card tracks the thumb.
-        DragGesture(minimumDistance: 6)
-            .onChanged { value in
-                drag = value.translation
+    /// Transparent multitouch layer. A one-finger drag is swipe-to-decide (streamed
+    /// back into the exact milestone-04 path — `SwipeDecision`, the threshold tick,
+    /// fly-off). Two-finger pinch+pan is the springy sharpness check that snaps back;
+    /// its pan is the piece deferred from milestone 04, given back here. Finger counts
+    /// keep the one-finger swipe from ever being contested by the two-finger zoom.
+    private func gestureSurface(size: CGSize, item: DeckItem) -> some View {
+        PhotoGestureView(
+            mode: .springy,
+            isCompare: false,
+            imagePixelSize: .zero,
+            zoom: .constant(.fit),
+            onSpringyZoom: { scale, anchor, translation in
+                zoomAnchor = anchor
+                zoomScale = max(1, scale)
+                zoomTranslation = translation
+            },
+            onSpringyEnded: {
+                withAnimation(cancelSpring) {
+                    zoomScale = 1; zoomTranslation = .zero
+                }
+            },
+            onDragChanged: { translation, velocity in
+                drag = translation
                 let crosses = SwipeDecision.crossesCommit(
-                    translation: value.translation, velocity: value.velocity,
-                    thresholds: model.thresholds)
+                    translation: translation, velocity: velocity, thresholds: model.thresholds)
                 if crosses && !didTick { Haptics.shared.thresholdCrossed(); didTick = true }
                 if !crosses { didTick = false }
-            }
-            .onEnded { value in
+            },
+            onDragEnded: { translation, velocity in
                 didTick = false
-                let outcome = SwipeDecision.outcome(
-                    translation: value.translation, velocity: value.velocity,
-                    thresholds: model.thresholds)
-                switch outcome {
+                switch SwipeDecision.outcome(translation: translation, velocity: velocity,
+                                             thresholds: model.thresholds) {
                 case .cancel:
                     withAnimation(cancelSpring) { drag = .zero }
                 case .verdict(let verdict):
                     flyOff(verdict, size: size)
                 }
-            }
+            },
+            onTap: { enterAnalysis() }
+        )
     }
 
-    /// Springy, two-finger, snaps back to fit on release — held by the fingers, not
-    /// by state, so there is no way to get stranded zoomed in sort mode.
-    private var zoom: some Gesture {
-        MagnifyGesture()
-            .onChanged { value in
-                zoomAnchor = value.startAnchor
-                zoomScale = max(1, value.magnification)
-            }
-            .onEnded { _ in
-                withAnimation(cancelSpring) { zoomScale = 1 }
-            }
+    // MARK: Analysis / compare entry
+
+    private func enterAnalysis() {
+        guard let item = model.current else { return }
+        analysis = AnalysisModel(
+            kind: .single, items: [item], pipeline: model.pipeline,
+            onVerdict: { verdict, _ in model.commit(verdict) },          // commits + advances the deck
+            onPin: { item in model.recordInPlace(.candidate, for: item, pin: true) }, // annotation, stays
+            onExit: { analysis = nil })
+    }
+
+    private func enterCompare() {
+        let items = model.compareItems
+        guard !items.isEmpty else { model.acknowledgePinned(); return }
+        analysis = AnalysisModel(
+            kind: .compare, items: items, pipeline: model.pipeline,
+            onVerdict: { verdict, item in model.recordInPlace(verdict, for: item) },
+            onPin: { item in model.recordInPlace(.candidate, for: item, pin: true) },
+            onExit: { analysis = nil; model.acknowledgePinned() })
     }
 
     private func flyOff(_ verdict: Verdict, size: CGSize) {
@@ -198,11 +225,10 @@ struct DeckView: View {
                            onPrimary: { model.beginSkipLap() },
                            onSecondary: { model.leaveSkipped() })
         case .pinnedOffer(let n):
-            // Compare is milestone 05 — acknowledge the count, don't offer a dead button.
-            EndOfDeckSheet(message: "\(n) pinned — compare arrives in a later version.",
-                           primary: "Done", secondary: nil,
-                           onPrimary: { model.acknowledgePinned() },
-                           onSecondary: {})
+            EndOfDeckSheet(message: "\(n) pinned — compare them?",
+                           primary: "Yes", secondary: "Later",
+                           onPrimary: { enterCompare() },
+                           onSecondary: { model.acknowledgePinned() })
         case .done:
             DoneView()
         }
@@ -441,6 +467,9 @@ struct DeckHostView: View {
         // Debug-only gesture surface for the Simulator, where PhotoKit can't be
         // seeded. Enable by launching with the `-synthetic-deck` argument (scheme
         // arguments, or the device-interaction session). Never in a normal run.
+        if ProcessInfo.processInfo.arguments.contains("-synthetic-compare") {
+            return .syntheticCompare()
+        }
         if ProcessInfo.processInfo.arguments.contains("-synthetic-deck") {
             return .synthetic()
         }

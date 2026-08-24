@@ -46,5 +46,9 @@ final class Haptics {
     /// before release.
     func thresholdCrossed() { selection.selectionChanged() }
 
+    /// Sticky zoom reaching the 1:1 detent (design skill: `.selection`). Same tick as
+    /// the threshold cross — a light "you've landed on something" signal.
+    func reachedOneToOne() { selection.selectionChanged() }
+
     func undo() { notification.notificationOccurred(.warning) }
 }
