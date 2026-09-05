@@ -32,6 +32,13 @@ final class DeckModel {
     private(set) var index: Int = 0
     private(set) var pinned: Set<String> = []
     private(set) var phase: Phase = .sorting
+
+    /// Every asset this run has committed a verdict for — deck swipes, pins, and the
+    /// analysis / compare in-place writes. It only grows; membership in the scoped pass-2
+    /// review is read LIVE from the recorder over this set, so an undone or re-sorted
+    /// candidate simply is no longer a candidate. This is what makes the pass-2 review
+    /// "the photos you sorted this run" (CLAUDE.md).
+    private(set) var touchedIDs: Set<String> = []
     /// The most recent committed verdict, for the synthetic-deck debug readout and
     /// nothing else. Cleared by undo.
     private(set) var lastCommitted: Verdict?
@@ -100,6 +107,7 @@ final class DeckModel {
     private func commit(_ verdict: Verdict, pinnedID: String?) {
         guard let item = current else { return }
         recorder.record(verdict, for: item)
+        touchedIDs.insert(item.id)
         if let pinnedID { pinned.insert(pinnedID) }
         marks.append(UndoMark(prevIndex: index, pinnedID: pinnedID))
         lastCommitted = verdict
@@ -113,6 +121,7 @@ final class DeckModel {
     /// on the deck's position. Undo is still one mark per call, so it reverts cleanly.
     func recordInPlace(_ verdict: Verdict, for item: DeckItem, pin: Bool = false) {
         recorder.record(verdict, for: item)
+        touchedIDs.insert(item.id)
         if pin { pinned.insert(item.id) }
         marks.append(UndoMark(prevIndex: index, pinnedID: pin ? item.id : nil))
         lastCommitted = verdict
@@ -125,6 +134,13 @@ final class DeckModel {
 
     /// The pinned compare set, in original deck order, resolved against the snapshot.
     var compareItems: [DeckItem] { orderedItems.filter { pinned.contains($0.id) } }
+
+    /// The candidates marked during THIS app run — the scoped pass-2 pool, and the gate
+    /// for the deck's Review affordance. Read live from the recorder over the touched set,
+    /// so an undone or re-sorted candidate drops out with no bookkeeping.
+    func runCandidateIDs() -> [String] {
+        touchedIDs.filter { recorder.verdict(for: $0) == .candidate }
+    }
 
     /// Reverts exactly one committed card. Returns to that photo unjudged — the only
     /// way forward is a fresh verdict (no redo). Covers the store, never the library.
@@ -202,11 +218,27 @@ final class DeckModel {
 // MARK: - Builders
 
 extension DeckModel {
-    /// The real deck: all unjudged photos, newest outing first, over the store.
+    /// The real deck: all unjudged photos, newest outing first, over the store. `since`
+    /// optionally bounds it (backlog "Choose a range" / scope question, milestone 08).
     @MainActor
-    static func live(store: JudgmentStore, pipeline: ImagePipeline, includeScreenshots: Bool = false) -> DeckModel {
-        let deck = DeckBuilder.build(store: store, includeScreenshots: includeScreenshots)
+    static func live(store: JudgmentStore, pipeline: ImagePipeline,
+                     includeScreenshots: Bool = false, since: Date? = nil) -> DeckModel {
+        let deck = DeckBuilder.build(store: store, includeScreenshots: includeScreenshots, since: since)
         let model = DeckModel(deck: deck, recorder: StoreDeckRecorder(store: store), pipeline: pipeline)
+        model.refreshPrefetch()
+        return model
+    }
+
+    /// The first-run deck: one bounded, named take (milestone 08). A single outing, so
+    /// one sessionID/label and the pill reads e.g. "Saturday · 23". Same store recorder
+    /// and prefetch as `live`; the take was already sliced/ordered by `FirstRun`.
+    @MainActor
+    static func firstRun(store: JudgmentStore, pipeline: ImagePipeline, take: FirstRun.FirstTake) -> DeckModel {
+        let items: [DeckItem] = take.assets.map { asset in
+            DeckItem(id: asset.localIdentifier, asset: asset,
+                     sessionID: "firstrun", sessionLabel: take.label, syntheticIndex: nil)
+        }
+        let model = DeckModel(deck: items, recorder: StoreDeckRecorder(store: store), pipeline: pipeline)
         model.refreshPrefetch()
         return model
     }

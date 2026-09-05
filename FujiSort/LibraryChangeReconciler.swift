@@ -46,7 +46,10 @@ enum Reconciler {
 }
 
 /// Thin adapter: translates PhotoKit change notifications into `Reconciler` calls.
-/// Registered at store construction. Device-only; not unit-tested.
+/// Constructed and retained by `JudgmentStore.startObservingLibrary()`, which is
+/// called once after authorization; nothing else constructs it. It registers itself
+/// with `PHPhotoLibrary` in `init` and lives for the owning store's lifetime.
+/// Device-only; not unit-tested (the reconciliation LOGIC above is the pure, tested half).
 @MainActor
 final class LibraryObserver: NSObject, PHPhotoLibraryChangeObserver {
     private var fetchResult: PHFetchResult<PHAsset>

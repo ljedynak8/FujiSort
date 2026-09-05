@@ -17,9 +17,24 @@ final class JudgmentStore {
     let undoStack = UndoStack()
     private let hasher: PerceptualHasher
 
+    /// The live change observer, owned and retained for this store's lifetime once
+    /// `startObservingLibrary()` is called. Nil until then — nothing else constructs
+    /// a `LibraryObserver`. This is what makes CLAUDE.md's dormant-record path run.
+    private var libraryObserver: LibraryObserver?
+
     init(context: ModelContext, hasher: PerceptualHasher = PhotoKitHasher()) {
         self.context = context
         self.hasher = hasher
+    }
+
+    /// Begin observing external library changes (deletions, re-adds, edits) so the
+    /// reconciler can mark records dormant and rematch them. Idempotent — safe to call
+    /// on every launch. MUST be called AFTER photo authorization: `LibraryObserver`
+    /// baselines its fetch at construction, so an earlier call would miss the initial
+    /// population of the now-visible library.
+    func startObservingLibrary() {
+        guard libraryObserver == nil else { return }
+        libraryObserver = LibraryObserver(store: self)
     }
 
     // MARK: - Retrieval

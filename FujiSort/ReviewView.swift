@@ -21,6 +21,9 @@ import Photos
 struct ReviewView: View {
     @Bindable var model: ReviewModel
     @Environment(\.dismiss) private var dismiss
+    // First run introduces the tiers here, where they're used (milestone 08). Inert once
+    // first run is complete, or once the intro has been seen.
+    @Environment(FirstRunState.self) private var firstRun
 
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 2), count: 3)
 
@@ -31,6 +34,9 @@ struct ReviewView: View {
             VStack(spacing: 0) {
                 topBar
                 FilterBar(model: model)
+                if firstRun.isActive, !firstRun.hasSeenReviewIntro {
+                    TierIntroBanner { firstRun.hasSeenReviewIntro = true }
+                }
                 grid
             }
 
@@ -152,6 +158,37 @@ private struct FilterBar: View {
         }
         .accessibilityLabel("\(title), \(count)")
         .accessibilityAddTraits(active ? [.isSelected] : [])
+    }
+}
+
+// MARK: - First-run tier introduction (shown once, where the tiers are used)
+
+private struct TierIntroBanner: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        Button(action: onDismiss) {
+            HStack(spacing: 10) {
+                Image(systemName: "star.fill")
+                    .font(.footnote)
+                    .foregroundStyle(Palette.portfolio)      // the one accent — Portfolio
+                Text("Candidates start in Strong. Swipe a tile right to promote to Portfolio, left to demote out. Tap for a closer look.")
+                    .font(.caption)
+                    .multilineTextAlignment(.leading)
+                    .foregroundStyle(Palette.ink.opacity(0.92))
+                Spacer(minLength: 8)
+                Text("Got it")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Palette.ink.opacity(0.60))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(Palette.chrome, in: .rect(cornerRadius: 12))
+            .padding(.horizontal, 12)
+            .padding(.bottom, 6)
+        }
+        .buttonStyle(.plain)
+        .accessibilityHint("Dismiss the tier introduction")
     }
 }
 
@@ -404,6 +441,9 @@ struct ReviewHostView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(FinishCoordinator.self) private var coordinator
     let synthetic: Bool
+    /// The candidates to review — the deck's `runCandidateIDs()`, scoping pass 2 to this
+    /// run. nil pools every live candidate (tests / synthetic).
+    var scopeIDs: [String]? = nil
     @State private var model: ReviewModel?
 
     var body: some View {
@@ -425,7 +465,8 @@ struct ReviewHostView: View {
         // Album sync runs here — the one place leaving the review is signalled. The
         // coordinator syncs (or, on the first finish, defers to the consent prompt).
         let coordinator = self.coordinator
-        return .live(store: store, pipeline: ImagePipeline()) {
+        return .live(store: store, pipeline: ImagePipeline(),
+                     restrictTo: scopeIDs.map(Set.init)) {
             coordinator.reviewDidLeave()
         }
     }

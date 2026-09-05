@@ -18,6 +18,18 @@ import SwiftUI
 import SwiftData
 import Photos
 
+// MARK: - Card geometry (decision 0011 — sort deck only)
+
+/// The sort-mode photograph reads as a card: inset from the safe area on all four
+/// sides, rounded, with a hairline edge (fujisort-design `hairline`). Analysis and
+/// compare stay full-bleed — the inset means "this is a card in a stack", and there
+/// is no stack there. Both values are empirical and expected to move; tunable in the
+/// same manner as `FirstRun.minimumTake`.
+enum DeckCard {
+    static let inset: CGFloat  = 12
+    static let radius: CGFloat = 14
+}
+
 // MARK: - Verdict visual styling (transient only — never persists next to a photo)
 
 private extension Verdict {
@@ -48,6 +60,11 @@ struct DeckView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(FinishCoordinator.self) private var coordinator
+    // First-run coaching + backlog (milestone 08). All of it gates on firstRun.isActive,
+    // so in normal mode every branch below is inert.
+    @Environment(FirstRunState.self) private var firstRun
+    @Environment(\.modelContext) private var modelContext
+    @Environment(AppPreferences.self) private var preferences
 
     @State private var drag: CGSize = .zero
     @State private var didTick = false
@@ -59,6 +76,11 @@ struct DeckView: View {
     @State private var showReview = false
     @State private var showFinish = false
     @State private var showSettings = false
+    // First-run only:
+    @State private var swipeCount = 0
+    @State private var showBacklog = false
+    @State private var pendingBacklog = false               // deferred until the consent sheet closes
+    @State private var backlogRemaining = 0
 
     private let maxRotation: Double = 8
     private let commit = Animation.easeOut(duration: 0.22)
@@ -69,18 +91,19 @@ struct DeckView: View {
             ZStack {
                 Palette.deck.ignoresSafeArea()
 
-                // The next card sits beneath the current one so a commit never
-                // leaves a gap — it is already there when the top card flies off.
-                if let next = model.next {
-                    DeckCardContent(item: next, pipeline: model.pipeline)
-                        .allowsHitTesting(false)
-                }
-
+                // Nothing is drawn behind the card (decision 0011): a photo-shaped
+                // inset card would let the next frame peek through the surround, and
+                // a glimpse of an unjudged photo previews a decision not yet made.
+                // Prefetch keeps the incoming card warm at the pipeline level.
                 if let current = model.current {
                     topCard(current, size: geo.size)
                 }
 
                 overlays(size: geo.size)
+
+                // Coach marks: chrome over the photograph, gone as soon as they've done
+                // their work. Non-interactive so they never contest the gesture surface.
+                firstRunCoaching()
             }
         }
         .fullScreenCover(item: $analysis) { analysisModel in
@@ -91,9 +114,10 @@ struct DeckView: View {
                 .transition(.opacity)
         }
         .fullScreenCover(isPresented: $showReview) {
-            // Pass 2. Non-scoped: it pools every candidate across outings. Album sync fires
-            // when the user leaves, at ReviewHostView's onLeave → coordinator seam.
-            ReviewHostView(synthetic: false)
+            // Pass 2, scoped to this run: the candidates marked this sitting (the deck's
+            // runCandidateIDs). Album sync still fires when the user leaves, at
+            // ReviewHostView's onLeave → coordinator seam.
+            ReviewHostView(synthetic: false, scopeIDs: model.runCandidateIDs())
         }
         .fullScreenCover(isPresented: $showFinish) {
             // The finish screen carries deletion and nothing else (decision 0005).
@@ -112,6 +136,24 @@ struct DeckView: View {
                 onSync:  { coordinator.resolveConsent(enable: true) },
                 onNotNow: { coordinator.resolveConsent(enable: false) })
         }
+        // The backlog offer — raised once, only after the first session completes: deck
+        // finished, review offered, albums written. Not now leaves a working full-deck app.
+        .sheet(isPresented: $showBacklog) {
+            BacklogSheet(remaining: backlogRemaining) { outcome in
+                showBacklog = false
+                firstRun.pendingScope = outcome     // nil = Not now / full deck next
+                firstRun.hasCompletedFirstRun = true
+            }
+        }
+        // Review dismissed during first run → offer the backlog. If the first-finish consent
+        // sheet is about to show, wait for it to close first so two sheets never collide.
+        .onChange(of: showReview) { was, now in
+            guard was, !now, firstRun.isActive else { return }
+            if coordinator.needsConsent { pendingBacklog = true } else { presentBacklog() }
+        }
+        .onChange(of: coordinator.needsConsent) { _, showing in
+            if !showing, pendingBacklog { presentBacklog() }
+        }
         .onDisappear { model.stopPrefetch() }
     }
 
@@ -120,10 +162,12 @@ struct DeckView: View {
     private func topCard(_ item: DeckItem, size: CGSize) -> some View {
         let verdict = currentVerdict(for: drag)
         let progress = commitProgress(drag)
-        return DeckCardContent(item: item, pipeline: model.pipeline)
+        // The verdict tint travels with the card and is clipped to its rounded edge
+        // (inside DeckCardContent) — never a full-screen wash.
+        return DeckCardContent(item: item, pipeline: model.pipeline,
+                               glowVerdict: verdict, glowProgress: progress)
             .scaleEffect(zoomScale, anchor: zoomAnchor)
             .offset(zoomTranslation)                       // two-finger pan (springs back)
-            .overlay { edgeGlow(verdict: verdict, progress: progress) }
             .overlay { gestureSurface(size: size, item: item) }
             .rotationEffect(rotation(for: drag, width: size.width))
             .offset(drag)
@@ -133,7 +177,7 @@ struct DeckView: View {
             .accessibilityLabel(Text(item.sessionLabel))
             .accessibilityActions {
                 ForEach(Verdict.allCases, id: \.self) { v in
-                    Button(v.spoken) { model.commit(v) }
+                    Button(v.spoken) { model.commit(v); noteFirstRunSwipe() }
                 }
                 Button("Pin for compare") { model.pin() }
                 Button("Analyse") { enterAnalysis() }
@@ -189,6 +233,9 @@ struct DeckView: View {
 
     private func enterAnalysis() {
         guard let item = model.current else { return }
+        // Tap is the accident sink, but it's also the moment the tap coach has taught its
+        // lesson — retire it (only relevant during first run).
+        if firstRun.isActive { firstRun.hasSeenTapCoach = true }
         analysis = AnalysisModel(
             kind: .single, items: [item], pipeline: model.pipeline,
             onVerdict: { verdict, _ in model.commit(verdict) },          // commits + advances the deck
@@ -212,14 +259,104 @@ struct DeckView: View {
             // Reduce Motion: cross-fade of the same duration, never remove feedback.
             withAnimation(commit) { cardOpacity = 0 } completion: {
                 model.commit(verdict)
+                noteFirstRunSwipe()
                 drag = .zero; cardOpacity = 1
             }
         } else {
             withAnimation(commit) { drag = offscreen(for: verdict, size: size, from: drag) } completion: {
                 model.commit(verdict)
+                noteFirstRunSwipe()
                 drag = .zero
             }
         }
+    }
+
+    /// First successful swipe retires the swipe coach (persisted — never re-shown, incl. the
+    /// second launch); a few swipes in, the tap coach is offered. No-op outside first run.
+    private func noteFirstRunSwipe() {
+        guard firstRun.isActive else { return }
+        swipeCount += 1
+        if !firstRun.hasSwiped {
+            withAnimation(.easeOut(duration: 0.2)) { firstRun.hasSwiped = true }
+        }
+        // If they never tap, don't nag forever — retire the tap coach after a while.
+        if swipeCount >= 8, !firstRun.hasSeenTapCoach { firstRun.hasSeenTapCoach = true }
+    }
+
+    // MARK: First-run coaching (chrome over the photo, gone when done)
+
+    @ViewBuilder
+    private func firstRunCoaching() -> some View {
+        // Only over a live card mid-pass, and never during a drag (it would fight the swipe
+        // it's teaching). Achromatic — coaching is not verdict feedback.
+        if firstRun.isActive, model.current != nil, model.phase == .sorting, drag == .zero {
+            if !firstRun.hasSwiped {
+                swipeCoach()
+            } else if !firstRun.hasSeenTapCoach, swipeCount >= 3 {
+                tapCoach()
+            }
+        }
+    }
+
+    /// The four directions, on the first card only, retiring after the first swipe.
+    private func swipeCoach() -> some View {
+        ZStack {
+            VStack {
+                coachChip("Candidate", "chevron.up")
+                Spacer()
+                coachChip("Skip", "chevron.down")
+            }
+            HStack {
+                coachChip("Reject", "chevron.left")
+                Spacer()
+                coachChip("Keep", "chevron.right")
+            }
+        }
+        // Clear the count pill (top-centre) and the button strip (bottom) so the
+        // "Candidate"/"Skip" chips don't collide with them.
+        .padding(.horizontal, 28)
+        .padding(.top, 76)
+        .padding(.bottom, 100)
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    /// Introduced in context — after a few swipes, not before the first.
+    private func tapCoach() -> some View {
+        VStack {
+            Spacer()
+            coachChip("Tap for a closer look", "hand.tap")
+                .padding(.bottom, 128)          // clear of the button strip
+        }
+        .allowsHitTesting(false)
+        .transition(.opacity)
+    }
+
+    private func coachChip(_ text: String, _ system: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: system)
+            Text(text)
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(Palette.ink.opacity(0.92))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Palette.chrome.opacity(0.9), in: .capsule)
+    }
+
+    // MARK: Backlog offer
+
+    private func presentBacklog() {
+        pendingBacklog = false
+        backlogRemaining = remainingUnjudgedCount()
+        showBacklog = true
+    }
+
+    /// How many unjudged photos remain across the whole library — the "N more to sort" count.
+    private func remainingUnjudgedCount() -> Int {
+        let store = JudgmentStore(context: modelContext)
+        let scoped = DeckScope.scopedIdentifiers(includeScreenshots: preferences.includeScreenshots)
+        return store.unjudged(scoped: scoped).count
     }
 
     // MARK: Overlays (pill, strip, end-of-deck)
@@ -234,8 +371,10 @@ struct DeckView: View {
             Spacer()
             if model.current != nil {
                 ButtonStrip(canUndo: model.canUndo,
+                            reviewCount: model.runCandidateIDs().count,
                             onUndo: { model.undo() },
-                            onPin: { model.pin() })
+                            onPin: { model.pin() },
+                            onReview: { showReview = true })
                     .padding(.bottom, 8)
             }
         }
@@ -256,7 +395,8 @@ struct DeckView: View {
                            onPrimary: { enterCompare() },
                            onSecondary: { model.acknowledgePinned() })
         case .done:
-            DoneView(onReview: { showReview = true },
+            DoneView(isFirstRun: firstRun.isActive,
+                     onReview: { showReview = true },
                      onFinish: { showFinish = true },
                      onSettings: { showSettings = true })
         }
@@ -308,54 +448,98 @@ struct DeckView: View {
         }
     }
 
-    @ViewBuilder
-    private func edgeGlow(verdict: Verdict, progress: Double) -> some View {
-        // Ramp in only as the swipe approaches the commit — a directional edge, not
-        // a full-card wash that would misrepresent the photo's colour.
-        if let color = verdict.tintColor {
-            let intensity = max(0, (progress - 0.4) / 0.6) * verdict.tintCap
-            let (start, end) = glowPoints(verdict)
-            LinearGradient(colors: [color.opacity(intensity), .clear],
-                           startPoint: start, endPoint: end)
-                .allowsHitTesting(false)
-        }
-    }
-
-    private func glowPoints(_ verdict: Verdict) -> (UnitPoint, UnitPoint) {
-        switch verdict {
-        case .reject:    return (.leading, .trailing)
-        case .keep:      return (.trailing, .leading)
-        case .candidate: return (.top, .bottom)
-        case .skip:      return (.bottom, .top)
-        }
-    }
 }
 
 // MARK: - Card content (image or synthetic)
 
+/// The sort-mode card (decision 0011). The photograph's own bounds are the card:
+/// fit to the photo's aspect ratio, inset from the safe area, rounded, with a
+/// hairline edge and no shadow. Landscape frames make a wide short card, portrait a
+/// tall one — the shape follows the photo, by design. The surround is transparent so
+/// only the card is visible; the transforms and gesture surface in DeckView stay
+/// full-screen. The verdict tint rides along, clipped to the rounded edge.
 private struct DeckCardContent: View {
     let item: DeckItem
     let pipeline: ImagePipeline?
+    var glowVerdict: Verdict? = nil
+    var glowProgress: Double = 0
     @State private var image: UIImage?
+
+    /// The card's aspect. The loaded image is exact; the asset's pixel dimensions
+    /// stand in until it arrives so the card doesn't pop shape. nil (synthetic) fills
+    /// the inset area.
+    private var aspect: CGFloat? {
+        if let image, image.size.height > 0 {
+            return image.size.width / image.size.height
+        }
+        if let asset = item.asset, asset.pixelWidth > 0, asset.pixelHeight > 0 {
+            return CGFloat(asset.pixelWidth) / CGFloat(asset.pixelHeight)
+        }
+        return nil
+    }
 
     var body: some View {
         ZStack {
-            Palette.deck
-            if let asset = item.asset {
-                if let image {
-                    Image(uiImage: image).resizable().scaledToFit()
-                }
-            } else {
-                synthetic
-            }
+            Color.clear                 // transparent surround — never a second image
+            card
         }
-        .ignoresSafeArea()
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: item.id) {
             guard let asset = item.asset, let pipeline else { return }
             image = nil
             for await update in pipeline.fullResolutionStream(for: asset) {
                 image = update.image
             }
+        }
+    }
+
+    private var card: some View {
+        content
+            .aspectRatio(aspect, contentMode: .fit)
+            .overlay { edgeGlow }       // over the photo, clipped by the rounding below
+            .clipShape(RoundedRectangle(cornerRadius: DeckCard.radius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: DeckCard.radius, style: .continuous)
+                    .strokeBorder(Palette.hairline, lineWidth: 1)   // hairline, never a shadow
+            }
+            .padding(DeckCard.inset)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if item.asset != nil {
+            ZStack {
+                Palette.deck            // holds the card's bounds until the pixels arrive
+                if let image {
+                    // The container already matches the photo's aspect, so fill leaves
+                    // no internal mat and the hairline traces the photo's true edge.
+                    Image(uiImage: image).resizable().scaledToFill()
+                }
+            }
+        } else {
+            synthetic
+        }
+    }
+
+    /// The directional verdict tint, ramping in only near the commit — a directional
+    /// edge on the card, not a full-card wash that would misrepresent the photo.
+    @ViewBuilder
+    private var edgeGlow: some View {
+        if let verdict = glowVerdict, let color = verdict.tintColor {
+            let intensity = max(0, (glowProgress - 0.4) / 0.6) * verdict.tintCap
+            let (start, end) = Self.glowPoints(verdict)
+            LinearGradient(colors: [color.opacity(intensity), .clear],
+                           startPoint: start, endPoint: end)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private static func glowPoints(_ verdict: Verdict) -> (UnitPoint, UnitPoint) {
+        switch verdict {
+        case .reject:    return (.leading, .trailing)
+        case .keep:      return (.trailing, .leading)
+        case .candidate: return (.top, .bottom)
+        case .skip:      return (.bottom, .top)
         }
     }
 
@@ -402,13 +586,20 @@ private struct CountPill: View {
 
 private struct ButtonStrip: View {
     let canUndo: Bool
+    /// Candidates marked this run. The Review affordance appears only when > 0 — mid-pass
+    /// access to the scoped pass-2 review, without waiting for the end of the deck.
+    let reviewCount: Int
     let onUndo: () -> Void
     let onPin: () -> Void
+    let onReview: () -> Void
 
     var body: some View {
         HStack(spacing: 40) {
             stripButton(system: "arrow.uturn.backward", label: "Undo", enabled: canUndo, action: onUndo)
             stripButton(system: "pin", label: "Pin", enabled: true, action: onPin)
+            if reviewCount > 0 {
+                stripButton(system: "square.grid.2x2", label: "Review", enabled: true, action: onReview)
+            }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 12)
@@ -467,6 +658,8 @@ private struct EndOfDeckSheet: View {
 /// separate actions (decision 0005) — album sync is not here at all; it fires on leaving
 /// the review. Settings sits here because album sync must be revocable.
 private struct DoneView: View {
+    /// First run introduces pass 2 here, where it's about to be used (interaction skill).
+    var isFirstRun: Bool = false
     let onReview: () -> Void
     let onFinish: () -> Void
     let onSettings: () -> Void
@@ -484,9 +677,23 @@ private struct DoneView: View {
             .padding(.trailing, 8)
 
             VStack(spacing: 20) {
-                Text("Nothing left to sort")
-                    .font(.body)
-                    .foregroundStyle(Palette.ink.opacity(0.60))
+                if isFirstRun {
+                    VStack(spacing: 8) {
+                        Text("You've sorted your first take")
+                            .font(.headline)
+                            .foregroundStyle(Palette.ink.opacity(0.92))
+                        Text("Photos you flicked up are candidates. Take a second pass to pick the best.")
+                            .font(.subheadline)
+                            .multilineTextAlignment(.center)
+                            .foregroundStyle(Palette.ink.opacity(0.60))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 32)
+                } else {
+                    Text("Nothing left to sort")
+                        .font(.body)
+                        .foregroundStyle(Palette.ink.opacity(0.60))
+                }
                 Button("Review candidates", action: onReview)
                     .font(.headline)
                     .foregroundStyle(Palette.ink.opacity(0.92))
@@ -542,6 +749,10 @@ struct DeckHostView: View {
     @Environment(AppPreferences.self) private var preferences
     @State private var model: DeckModel?
 
+    /// Bounds the deck to a capture window, set by the backlog offer's "Choose a range"
+    /// for the first normal deck only (milestone 08). nil is the full newest-first deck.
+    var scope: ScopeChoice? = nil
+
     var body: some View {
         ZStack {
             Palette.deck.ignoresSafeArea()
@@ -585,6 +796,7 @@ struct DeckHostView: View {
         #endif
         let store = JudgmentStore(context: modelContext)
         return .live(store: store, pipeline: ImagePipeline(),
-                     includeScreenshots: preferences.includeScreenshots)
+                     includeScreenshots: preferences.includeScreenshots,
+                     since: scope?.since())
     }
 }

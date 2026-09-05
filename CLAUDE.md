@@ -41,7 +41,7 @@ Ordering a queue, grouping likely duplicates, and flagging technically broken fr
 
 Two states. **Sort is home; analysis is a per-photo detour.**
 
-**Sort** — full-bleed card deck, one photo.
+**Sort** — a card deck, one photo. The photograph is inset, rounded, and hairline-edged so it reads as a card (decision 0011).
 
 | Gesture | Meaning |
 |---|---|
@@ -80,7 +80,8 @@ The pass-1 **Keep** verdict and the pass-2 tiers are distinct concepts. Do not i
 - **A verdict commits and advances. An annotation stays.** True regardless of whether it was triggered by swipe or button.
 - **Zoom is free pinch, aimed by the user.** No algorithmic targeting — do not jump to detected faces or eyes.
 - **Undo covers the store, never the library.** One stack per app run, unlimited depth, no redo.
-- **Album sync runs when the user leaves the review**, not on a Finish button. It is idempotent and one-way: the store is the truth, the album is a projection.
+- **Pass 2 reviews the current run, not the whole backlog.** The review pool is the candidates marked *this app run* (the deck's `runCandidateIDs()`), not every candidate ever recorded. It is reachable mid-pass from a **Review** button in the deck's action strip — shown only once the run has at least one candidate — as well as at end-of-deck. A consequence, accepted deliberately: a candidate marked in an earlier run but never promoted or demoted does not resurface in a later run's review; the store still holds it, pass 2 just won't re-offer it. (The `ReviewModel.live` builder still accepts a nil scope to pool every candidate library-wide — kept for tests, not wired to any live entry point.)
+- **Album sync runs when the user leaves the review**, not on a Finish button. It is idempotent and one-way: the store is the truth, the album is a projection. Sync still reads the *whole* store's tiers, so scoping the review to the run never narrows what syncs.
 - **`isFavorite` is never written** unless explicitly opted into. Reading it is fine.
 - **Rejects are deleted as one batch at session end**, never per photo.
 - **The deck is "photos with no verdict recorded."** No cursor, no saved position. A *record* is not a *verdict* — records legitimately exist without one (created-then-undone, or dormant after the asset was deleted elsewhere), and those photos stay in the deck.
@@ -96,7 +97,7 @@ The pass-1 **Keep** verdict and the pass-2 tiers are distinct concepts. Do not i
 - Ink is white at opacity — 92% / 60% / 38% — not fixed greys, so it composites over photographs.
 - **One saturated colour in the app: `#E0A33C`, reserved for Portfolio.** Verdict colour is transient only and never persists next to an image.
 - SF Pro throughout. No custom or serif faces. Monospaced digits on numeric values.
-- Photos are full-bleed: no inset, corner radius, border, or shadow.
+- Photos are full-bleed in **analysis and compare**: no inset, corner radius, border, or shadow. **The sort deck is the exception (decision 0011):** the photograph is an inset, rounded, hairline-edged card sized to its own bounds — but still never a drop shadow, in any state.
 - Haptics are the primary confirmation channel in sort mode, with a distinct signature per verdict.
 
 **Do not use the default AI aesthetic** — cream backgrounds, serif display type, terracotta accents, editorial layout. A cream background is the worst possible surround for judging a photograph. Full system in the `fujisort-design` skill; use its values as specified, and if one seems wrong, say so rather than substituting.
@@ -147,11 +148,11 @@ Numbering starts at **00**. Where a session says "milestone N", this is N.
 | 05 | Analysis state — sticky zoom, HUD, verdict buttons, filmstrip compare | done |
 | 06 | Review view — tiles, tier filters, movement, compare | done |
 | 07 | Finish — album sync on leaving review, batch reject deletion | done |
-| 08 | First-run experience | next |
+| 08 | First-run experience | done — loop verified on device (Aug 2 take, 67 photos); limited/denied & live dormant path unverified |
 
 **01 was the gate and it passed** — full-resolution latency cleared the redesign threshold. Its measurements are above and are binding. The asset fingerprint remains mandatory: identifier stability across a device restore is still unmeasured, and the fingerprint cannot be backfilled onto records created without it.
 
-**Known gap, carried since milestone 02:** `LibraryObserver` is implemented but **never instantiated** — no `PHPhotoLibraryChangeObserver` is registered, so external library changes are not observed. Its own doc comment claims "Registered at store construction", which is why this went unnoticed for five milestones. In-app deletion reconciles explicitly (milestone 07) and the deck rebuilds from a fresh fetch each launch, so nothing is visibly broken — but the **dormant-record path `CLAUDE.md` specifies is never exercised.** Wire it before anything assumes live external reconciliation.
+**Closed in milestone 08 (was carried since milestone 02):** `LibraryObserver` is now instantiated. `JudgmentStore.startObservingLibrary()` owns and retains one observer for the store's lifetime; `FinishCoordinator` forwards to its app-lifetime store, and `RootView` calls it once after authorization (the observer baselines its fetch at construction, so it must start *after* the grant). The dormant-record path the reconciler tests cover is now exercised live. Its doc comment has been corrected. **Still unverified on device:** whether any real dormant records surface once it is running — part of the milestone-08 writeback.
 
 ## Project setup notes
 

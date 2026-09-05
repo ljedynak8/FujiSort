@@ -20,6 +20,8 @@ enum Palette {
     static let grid   = Color(red: 0x14 / 255, green: 0x14 / 255, blue: 0x16 / 255)
     static let chrome = Color(red: 0x1C / 255, green: 0x1C / 255, blue: 0x1E / 255)
     static let ink    = Color.white
+    /// Dividers, tile borders, and the sort-mode card edge — white @ 8% (fujisort-design).
+    static let hairline = Color.white.opacity(0.08)
     /// The one saturated colour in the app, reserved for Portfolio (fujisort-design).
     static let portfolio = Color(red: 0xE0 / 255, green: 0xA3 / 255, blue: 0x3C / 255)
 }

@@ -14,6 +14,9 @@ struct FujiSortApp: App {
     // review, settings and finish surfaces all share one instance (milestone 07).
     @State private var preferences: AppPreferences
     @State private var coordinator: FinishCoordinator
+    // First-run gate and coach-mark bookkeeping, injected once so RootView, the deck and
+    // the review all read the same state (milestone 08).
+    @State private var firstRun: FirstRunState
 
     init() {
         let schema = Schema([
@@ -32,6 +35,7 @@ struct FujiSortApp: App {
         let prefs = AppPreferences()
         _preferences = State(initialValue: prefs)
         _coordinator = State(initialValue: FinishCoordinator(preferences: prefs, context: container.mainContext))
+        _firstRun = State(initialValue: FirstRunState())
     }
 
     var body: some Scene {
@@ -39,6 +43,7 @@ struct FujiSortApp: App {
             RootView()
                 .environment(preferences)
                 .environment(coordinator)
+                .environment(firstRun)
         }
         .modelContainer(sharedModelContainer)
     }

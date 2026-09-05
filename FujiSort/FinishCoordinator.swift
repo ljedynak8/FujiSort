@@ -33,6 +33,15 @@ final class FinishCoordinator {
         self.store = JudgmentStore(context: context)
     }
 
+    /// Anchors library observation on the app-lifetime store this coordinator holds.
+    /// The observer reconciles records over the shared `ModelContext` regardless of
+    /// which transient store created them, so one is enough. Idempotent; called once
+    /// from `RootView` after authorization. (Milestone 08 — the observer was dead code
+    /// since milestone 02; this is what finally starts it.)
+    func startObservingLibrary() {
+        store.startObservingLibrary()
+    }
+
     /// The ReviewModel.leave() seam. Album sync is the ONLY thing that fires here.
     func reviewDidLeave() {
         if preferences.albumSyncDecided {

@@ -8,8 +8,9 @@
 //  @Observable and library-optional so it drives the synthetic Simulator grid and the
 //  unit tests unchanged, exactly like DeckModel.
 //
-//  The pool crosses session boundaries on purpose: it is EVERY candidate still awaiting
-//  judgment, not a scoped session (CLAUDE.md — the one surface that does this).
+//  The pool is scoped to the current app run: the candidates you marked this sitting,
+//  passed in as ids by the deck (CLAUDE.md). The builder still accepts nil to pool every
+//  live candidate library-wide — used by the tests and left open for a future entry point.
 //
 //  Leaving the review is exposed as a SINGLE event (`leave()` → `onLeave`), the one
 //  place milestone 07 hooks album sync. Nothing here writes to albums.
@@ -217,14 +218,18 @@ final class ReviewModel: Identifiable {
 
 extension ReviewModel {
 
-    /// The real review: EVERY live candidate across the library, non-scoped. captureDate
-    /// and the dHash come straight off the stored fingerprint — no PhotoKit round-trip —
-    /// so the similarity sort is nearly free and the fingerprints are always warm (they
-    /// are mandatory at record creation, milestone 02).
+    /// The real review, scoped to the CURRENT app run: the live candidates whose ids are in
+    /// `restrictTo` (the deck's `runCandidateIDs()`). Passing nil pools every live candidate
+    /// across the library — kept for tests and any future non-scoped entry. captureDate and
+    /// the dHash come straight off the stored fingerprint — no PhotoKit round-trip — so the
+    /// similarity sort is nearly free and the fingerprints are always warm (they are
+    /// mandatory at record creation, milestone 02).
     @MainActor
     static func live(store: JudgmentStore, pipeline: ImagePipeline,
+                     restrictTo ids: Set<String>? = nil,
                      onLeave: @escaping () -> Void) -> ReviewModel {
-        let candidates = store.allJudgments().filter { $0.verdict == .candidate && !$0.isDormant }
+        var candidates = store.allJudgments().filter { $0.verdict == .candidate && !$0.isDormant }
+        if let ids { candidates = candidates.filter { ids.contains($0.assetLocalIdentifier) } }
 
         var byID: [String: PHAsset] = [:]
         let ids = candidates.map(\.assetLocalIdentifier)

@@ -51,10 +51,13 @@ enum DeckBuilder {
     }
 
     /// Device wrapper. Same scope as the rest of the app (DeckScope), clustered by
-    /// capture date, ordered newest outing first.
+    /// capture date, ordered newest outing first. `since` optionally bounds the deck to
+    /// captures on or after a date — used by the backlog offer's "Choose a range" and the
+    /// no-substantial-take scope question (milestone 08); nil is the full deck.
     @MainActor
-    static func build(store: JudgmentStore, includeScreenshots: Bool = false) -> [DeckItem] {
-        let assets = DeckScope.scopedAssets(includeScreenshots: includeScreenshots)
+    static func build(store: JudgmentStore, includeScreenshots: Bool = false, since: Date? = nil) -> [DeckItem] {
+        var assets = DeckScope.scopedAssets(includeScreenshots: includeScreenshots)
+        if let since { assets = assets.filter { ($0.creationDate ?? .distantPast) >= since } }
         guard !assets.isEmpty else { return [] }
 
         var byID: [String: PHAsset] = [:]
